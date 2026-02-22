@@ -1,0 +1,23 @@
+:root {
+    /* The "Void" Foundation (Backgrounds) */
+    --bg-app: #020617;
+    --bg-surface: #0F172A;
+    --border-subtle: rgba(255, 255, 255, 0.08);
+
+    /* The Neon Accent Palette */
+    --color-primary: #02FF9D;
+    --color-critical: #FF3B30;
+    --color-action: #2E93FA;
+    --color-magic: #9D4EDD;
+    --color-warning: #FFB020;
+    --color-lifestyle: #FF2D55;
+
+    /* Text Colors */
+    --text-primary: #FFFFFF;
+    --text-secondary: #94A3B8;
+}
+
+body {
+    background-color: var(--bg-app);
+    color: var(--text-primary);
+}

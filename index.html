@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Relief - Financial Map</title>
+    <link rel="icon" type="image/png" href="/assets/logo.png">
+    <link rel="apple-touch-icon" href="/assets/logo.png">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'sans-serif'] },
+                    colors: {
+                        relief: {
+                            bg: '#020617',
+                            surface: '#0F172A',
+                            border: 'rgba(255, 255, 255, 0.08)',
+                            primary: '#02FF9D',
+                            critical: '#FF3B30',
+                            action: '#2E93FA',
+                            magic: '#9D4EDD',
+                            warning: '#FFB020',
+                            lifestyle: '#FF2D55',
+                            text: {
+                                primary: '#FFFFFF',
+                                secondary: '#94A3B8'
+                            }
+                        }
+                    },
+                    animation: {
+                        'page-enter': 'pageEnter 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards',
+                        'nav-expand': 'navExpand 0.4s cubic-bezier(0.2, 0, 0, 1) forwards',
+                        'fade-in': 'fadeIn 0.3s ease-out forwards',
+                    },
+                    keyframes: {
+                        pageEnter: {
+                            '0%': { opacity: '0', transform: 'translateY(8px) scale(0.99)' },
+                            '100%': { opacity: '1', transform: 'translateY(0) scale(1)' },
+                        },
+                        fadeIn: {
+                            '0%': { opacity: '0' },
+                            '100%': { opacity: '1' },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Fix background issues on overscroll */
+        html, body, #root { 
+            height: 100%; 
+            background-color: transparent; /* Allow layout gradient to show */
+            color: white; 
+            overscroll-behavior-y: none; /* Prevents rubber-banding showing browser background */
+        }
+        
+        /* Fallback background for body in case layout fails to load immediately, matching top of gradient */
+        body {
+            background-color: #020617;
+        }
+        
+        /* Hide Scrollbar but keep functionality */
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+        /* Date input fix */
+        input[type="date"] { color-scheme: dark; }
+    </style>
+<script type="importmap">
+{
+  "imports": {
+    "react/": "https://esm.sh/react@^19.2.4/",
+    "react": "https://esm.sh/react@^19.2.4",
+    "react-router-dom": "https://esm.sh/react-router-dom@^7.13.0",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
+    "lucide-react": "https://esm.sh/lucide-react@^0.563.0",
+    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@^2.95.3",
+    "react-dom": "https://esm.sh/react-dom@^19.2.4"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+<body>
+    <div id="root"></div>
+<script type="module" src="/index.tsx"></script>
+</body>
+</html>
