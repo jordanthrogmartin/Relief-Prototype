@@ -4,7 +4,7 @@ import { ChevronLeft } from 'lucide-react';
 import { supabase } from '../../services/supabase';
 import { Button } from '../../components/ui/Button';
 
-export const CalendarSettings: React.FC = () => {
+export const PreferencesSettings: React.FC = () => {
     const navigate = useNavigate();
     const [threshold, setThreshold] = useState('');
     const [loading, setLoading] = useState(false);

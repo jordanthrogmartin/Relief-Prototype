@@ -57,7 +57,7 @@ export const Profile: React.FC = () => {
                 <div className="relative z-10">
                     <h2 className="text-lg font-bold text-relief-text-primary">{userProfile?.display_name || 'Member'}</h2>
                     <p className="text-xs text-relief-text-secondary font-medium">{userProfile?.full_name || 'Relief User'}</p>
-                    <button onClick={() => navigate('/settings/profile')} className="mt-2 text-[10px] bg-white/10 hover:bg-white/20 px-3 py-1 rounded-full text-white font-bold transition-colors">
+                    <button onClick={() => navigate('/settings/editprofile')} className="mt-2 text-[10px] bg-white/10 hover:bg-white/20 px-3 py-1 rounded-full text-white font-bold transition-colors">
                         Edit Profile
                     </button>
                 </div>
@@ -78,7 +78,7 @@ export const Profile: React.FC = () => {
                 <div>
                     <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-3 ml-2">Configuration</h3>
                     <div className="space-y-2">
-                        <MenuItem icon={<Sliders className="w-4 h-4" />} label="Preferences" path="/settings/calendar" subtext="Display & Thresholds" />
+                        <MenuItem icon={<Sliders className="w-4 h-4" />} label="Preferences" path="/settings/preferences" subtext="Display & Thresholds" />
                         <MenuItem icon={<Wallet className="w-4 h-4" />} label="Budget Config" path="/settings/budget" subtext="Categories & Groups" />
                         <MenuItem icon={<Zap className="w-4 h-4" />} label="Rules" path="/settings/rules" subtext="Smart Automation" />
                         <MenuItem icon={<Store className="w-4 h-4" />} label="Merchants" locked subtext="Manage Payees" />

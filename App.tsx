@@ -6,8 +6,8 @@ import { Activity } from './pages/Activity';
 import { Budget } from './pages/Budget';
 import { Insights } from './pages/Insights';
 import { Profile } from './pages/Profile';
-import { ProfileSettings } from './pages/settings/Profile';
-import { CalendarSettings } from './pages/settings/Calendar';
+import { EditProfileSettings } from './pages/settings/EditProfile';
+import { PreferencesSettings } from './pages/settings/Preferences';
 import { EditBudgetSettings } from './pages/settings/EditBudget';
 import { RulesSettings } from './pages/settings/Rules';
 import { Auth } from './pages/Auth';
@@ -46,8 +46,8 @@ const MainContent: React.FC = () => {
                     <Route path="/profile" element={<Profile />} />
                     
                     {/* Settings Sub-pages */}
-                    <Route path="/settings/profile" element={<ProfileSettings />} />
-                    <Route path="/settings/calendar" element={<CalendarSettings />} />
+                    <Route path="/settings/editprofile" element={<EditProfileSettings />} />
+                    <Route path="/settings/preferences" element={<PreferencesSettings />} />
                     <Route path="/settings/budget" element={<EditBudgetSettings />} />
                     <Route path="/settings/rules" element={<RulesSettings />} />
                     

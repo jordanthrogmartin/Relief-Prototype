@@ -6,7 +6,7 @@ import { UserProfile } from '../../types';
 import { Button } from '../../components/ui/Button';
 import { useGlobalContext } from '../../context/GlobalContext';
 
-export const ProfileSettings: React.FC = () => {
+export const EditProfileSettings: React.FC = () => {
     const navigate = useNavigate();
     const { updateUserTimezone } = useGlobalContext();
     const [profile, setProfile] = useState<UserProfile | null>(null);

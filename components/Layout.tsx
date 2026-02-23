@@ -121,7 +121,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                         <div className="flex items-center justify-between h-[50px] mb-2">
                             {/* Left: Preferences */}
                             <button 
-                                onClick={() => navigate('/settings/calendar')} 
+                                onClick={() => navigate('/settings/preferences')} 
                                 className="w-10 h-10 flex items-center justify-center rounded-full bg-slate-800/50 border border-white/5 text-slate-400 hover:text-white transition-colors active:scale-95"
                             >
                                 <Settings size={20} />

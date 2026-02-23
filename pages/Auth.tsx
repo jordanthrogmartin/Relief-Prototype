@@ -93,7 +93,7 @@ export const Auth: React.FC = () => {
         }
         setLoading(true);
         const { error } = await supabase.auth.resetPasswordForEmail(email, {
-            redirectTo: window.location.origin + '/#/settings/profile',
+            redirectTo: window.location.origin + '/#/profile',
         });
         setLoading(false);
         if (error) setMsg(error.message);
