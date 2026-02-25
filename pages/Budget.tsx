@@ -21,7 +21,8 @@ export const Budget: React.FC = () => {
         setViewDate,
         isViewLoading,
         activeBudgetTab,
-        setActiveBudgetTab
+        setActiveBudgetTab,
+        triggerRefresh
     } = useGlobalContext();
     
     // We synchronize local date view with Global Context View Date
@@ -137,7 +138,7 @@ export const Budget: React.FC = () => {
             // We rely on context update for UI, but context only has initial load overrides.
             // In a real app we'd refresh context here. For now, let's just trigger a reload if needed, but optimally update locally.
             // Since overrides are in GlobalContext, we should refresh.
-            window.location.reload(); // Simplest way to ensure global context gets new overrides for now without adding more context logic.
+            triggerRefresh(); // Simplest way to ensure global context gets new overrides for now without adding more context logic.
         } catch (error) {
             console.error(error);
             alert("Failed to save budget.");
