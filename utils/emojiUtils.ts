@@ -8,16 +8,17 @@ export const formatCategoryName = (emoji: string, name: string): string => {
 export const parseCategoryName = (fullName: string): { emoji: string, name: string } => {
     if (!fullName) return { emoji: '', name: '' };
     
-    // Regex to match starting emoji (simple approximation for common emojis)
-    // \p{Extended_Pictographic} covers most emojis.
-    // We assume the format is "EMOJI Name" (space separated)
-    const match = fullName.match(/^(\p{Extended_Pictographic}+)\s+(.*)$/u);
+    // Improved regex to match starting emoji, including:
+    // - Extended Pictographics
+    // - Emoji Modifiers (skin tones)
+    // - Zero Width Joiner (\u200D)
+    // - Variation Selector-16 (\uFE0F)
+    // - Keycap combining characters (\u20E3) - added for completeness though less common as "icon"
+    const match = fullName.match(/^([\p{Extended_Pictographic}\p{EMod}\u200D\uFE0F\u20E3]+)\s+(.*)$/u);
     
     if (match) {
         return { emoji: match[1], name: match[2] };
     }
     
-    // Fallback: Check if the first character is non-ascii or looks like an emoji? 
-    // Or just return no emoji if no space pattern found.
     return { emoji: '', name: fullName };
 };

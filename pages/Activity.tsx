@@ -20,7 +20,8 @@ export const Activity: React.FC = () => {
         viewDate,
         setViewDate,
         isViewLoading,
-        budgetGroups
+        budgetGroups,
+        todayInTimezone
     } = useGlobalContext();
 
     const [search, setSearch] = useState('');
@@ -104,28 +105,18 @@ export const Activity: React.FC = () => {
 
     const getRowStyle = (t: Transaction) => {
         let base = "w-full p-4 rounded-xl border border-relief-border bg-relief-bg flex justify-between items-center hover:bg-relief-surface transition-colors text-left group";
-        if (t.is_ghost) return `${base} border-relief-magic/30 bg-relief-magic/10`; 
-        if (t.status === 'expected') return `${base} opacity-40`; 
-        if (t.status === 'skipped') return `${base} opacity-20 line-through decoration-relief-critical decoration-2`; 
+        const isPastDue = t.status === 'expected' && normalizeDate(t.transaction_date) < todayInTimezone;
+        const isExpected = t.status === 'expected';
+        
+        if (t.is_ghost) return `${base} border-purple-500 border-2 bg-purple-500/10 hover:bg-purple-500/20`; 
+        if (isPastDue) return `${base} border-yellow-500 border-2 animate-pulse bg-yellow-500/10 hover:bg-yellow-500/20`;
+        if (t.status === 'skipped') return `${base} bg-slate-800/20 opacity-50`; 
+        if (isExpected) return `${base} opacity-50`;
         return base;
     };
 
     return (
         <div className="space-y-4 pt-4 px-4 pb-24 animate-page-enter">
-            <header className="flex justify-between items-end px-2">
-                <div>
-                    <h1 className="text-2xl font-bold italic text-emerald-300">Activity</h1>
-                    <p className="text-slate-500 text-[10px] uppercase tracking-widest font-bold">Transaction Feed</p>
-                </div>
-                <button 
-                    onClick={() => setShowExpected(!showExpected)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 bg-slate-800/50 active:scale-95 transition-transform"
-                >
-                    {showExpected ? <CheckSquare className="w-4 h-4 text-emerald-400" /> : <Square className="w-4 h-4 text-slate-500" />}
-                    <span className={`text-[10px] font-bold uppercase tracking-wider ${showExpected ? 'text-emerald-400' : 'text-slate-500'}`}>View Expected</span>
-                </button>
-            </header>
-
             {/* Month Picker Bar */}
             <div className="flex items-center justify-between px-2 py-2">
                 <button onClick={() => changeMonth('prev')} className="p-2 text-slate-400 hover:text-white border border-white/5 rounded-lg bg-slate-800/50">
@@ -143,16 +134,22 @@ export const Activity: React.FC = () => {
                 </button>
             </div>
 
-            <div className="px-2">
-                <div className="flex items-center bg-[#0F172A] border border-white/5 shadow-lg shadow-black/40 rounded-2xl px-3">
+            <div className="px-2 flex gap-2">
+                <div className="flex-grow flex items-center bg-[#0F172A] border border-white/5 shadow-lg shadow-black/40 rounded-2xl px-3">
                     <Search className="w-4 h-4 text-relief-text-secondary" />
                     <input 
                         className="w-full bg-transparent p-3 text-sm text-relief-text-primary outline-none placeholder:text-relief-text-secondary"
-                        placeholder="Search current month..."
+                        placeholder="Search..."
                         value={search}
                         onChange={e => setSearch(e.target.value)}
                     />
                 </div>
+                <button 
+                    onClick={() => setShowExpected(!showExpected)}
+                    className={`flex items-center justify-center p-3 rounded-2xl border shadow-lg shadow-black/40 transition-all active:scale-95 ${showExpected ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-400' : 'bg-[#0F172A] border-white/5 text-slate-500'}`}
+                >
+                    {showExpected ? <CheckSquare className="w-5 h-5" /> : <Square className="w-5 h-5" />}
+                </button>
             </div>
 
             <div className={`space-y-6 px-2 transition-opacity duration-200 ${isViewLoading ? 'opacity-50 pointer-events-none' : 'opacity-100'}`}>
@@ -170,6 +167,7 @@ export const Activity: React.FC = () => {
                         <div className="space-y-2">
                             {groupedTransactions[date].map(t => {
                                 const { emoji } = parseCategoryName(t.category || '');
+                                const isSkipped = t.status === 'skipped';
                                 return (
                                     <button 
                                         key={t.id} 
@@ -177,15 +175,15 @@ export const Activity: React.FC = () => {
                                         className={getRowStyle(t)}
                                     >
                                         <div className="overflow-hidden mr-3">
-                                            <div className="font-bold text-sm text-white truncate group-hover:text-emerald-300 transition-colors">
+                                            <div className={`font-bold text-sm truncate transition-colors ${isSkipped ? 'text-slate-500 line-through decoration-red-500 decoration-2' : 'text-white group-hover:text-emerald-300'}`}>
                                                 {emoji && <span className="mr-1.5">{emoji}</span>}
                                                 {t.name || t.merchant || 'Untitled'}
                                             </div>
                                             <div className="text-[10px] text-slate-500 font-medium truncate mt-1 flex items-center gap-1.5">
-                                                <span className={`uppercase ${t.status === 'cleared' ? 'text-emerald-500' : 'text-slate-500'}`}>{t.status}</span>
+                                                <span className={`uppercase ${t.status === 'cleared' ? 'text-emerald-500' : 'text-slate-500'} ${isSkipped ? 'line-through decoration-red-500 decoration-2' : ''}`}>{t.status}</span>
                                             </div>
                                         </div>
-                                        <div className={`font-bold text-sm whitespace-nowrap ${t.amount >= 0 ? 'text-emerald-400' : 'text-slate-200'} ${t.is_ghost ? 'text-indigo-400' : ''}`}>
+                                        <div className={`font-bold text-sm whitespace-nowrap ${t.amount >= 0 ? 'text-emerald-400' : 'text-slate-200'} ${t.is_ghost ? 'text-indigo-400' : ''} ${isSkipped ? 'text-slate-500 line-through decoration-red-500 decoration-2' : ''}`}>
                                             {t.amount >= 0 ? '+' : ''}{t.amount.toFixed(2)}
                                         </div>
                                     </button>

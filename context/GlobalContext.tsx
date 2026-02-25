@@ -31,6 +31,14 @@ interface GlobalContextType {
     activeHomeTab: 'dashboard' | 'calendar';
     setActiveHomeTab: (tab: 'dashboard' | 'calendar') => void;
     
+    // Budget Page Tab State
+    activeBudgetTab: 'overview' | 'income' | 'expenses' | 'goals';
+    setActiveBudgetTab: (tab: 'overview' | 'income' | 'expenses' | 'goals') => void;
+    
+    // Insights Page Tab State
+    activeInsightsTab: 'goals' | 'reports';
+    setActiveInsightsTab: (tab: 'goals' | 'reports') => void;
+    
     // Triggers
     refreshTrigger: number;
     triggerRefresh: () => void;
@@ -49,6 +57,8 @@ interface GlobalContextType {
     // Persistent Dashboard Data
     currentMonthStats: CurrentMonthStats | null;
     currentBalance: number;
+    currentTransactions: Transaction[];
+    currentOpeningBalance: number;
 
     // Ghost/Simulation
     ghostTransactions: Transaction[]; 
@@ -86,12 +96,16 @@ export const GlobalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const [isViewLoading, setIsViewLoading] = useState(false);
     const [showExpected, setShowExpected] = useState(true);
     const [activeHomeTab, setActiveHomeTab] = useState<'dashboard' | 'calendar'>('dashboard');
+    const [activeBudgetTab, setActiveBudgetTab] = useState<'overview' | 'income' | 'expenses' | 'goals'>('overview');
+    const [activeInsightsTab, setActiveInsightsTab] = useState<'goals' | 'reports'>('goals');
     
     // Transactions & Balances
     const [transactions, setTransactions] = useState<Transaction[]>([]);
     const [openingBalance, setOpeningBalance] = useState(0);
     const [currentMonthStats, setCurrentMonthStats] = useState<CurrentMonthStats | null>(null);
     const [currentBalance, setCurrentBalance] = useState(0);
+    const [currentTransactions, setCurrentTransactions] = useState<Transaction[]>([]);
+    const [currentOpeningBalance, setCurrentOpeningBalance] = useState(0);
     
     const [ghostTransactions, setGhostTransactions] = useState<Transaction[]>([]);
     const [ruleCandidate, setRuleCandidate] = useState<Transaction | null>(null);
@@ -169,34 +183,113 @@ export const GlobalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         const startStr = startDate.toISOString().split('T')[0];
         const endStr = endDate.toISOString().split('T')[0];
 
-        let prevBalance = 0;
-        try {
-            const snapshotDate = new Date(startDate);
-            snapshotDate.setMonth(snapshotDate.getMonth() - 1);
-            const snapshotMonthKey = `${snapshotDate.getFullYear()}-${String(snapshotDate.getMonth() + 1).padStart(2, '0')}`;
-            const { data: snapshot } = await supabase.from('monthly_snapshots').select('balance').eq('user_id', userId).eq('month', snapshotMonthKey).single();
-            if (snapshot) prevBalance = snapshot.balance;
-            else {
-                const { data: historyData } = await supabase.from('transactions').select('amount').eq('user_id', userId).lt('transaction_date', startStr).neq('status', 'skipped');
-                prevBalance = historyData?.reduce((sum, t) => sum + t.amount, 0) || 0;
-            }
-        } catch (e) { console.warn('Balance fetch error', e); }
-        setOpeningBalance(prevBalance);
+        const todayD = new Date();
+        const currentMonthStart = new Date(todayD.getFullYear(), todayD.getMonth(), 1);
+        const currentMonthEnd = new Date(todayD.getFullYear(), todayD.getMonth() + 1, 0);
+        const currentFetchEnd = new Date(todayD.getFullYear(), todayD.getMonth() + 6, 0);
+        const currentStartStr = currentMonthStart.toISOString().split('T')[0];
+        const currentEndStr = currentFetchEnd.toISOString().split('T')[0];
+        const todayStr = getTodayInTimezone(defaultTimezone);
 
-        const { data: txns } = await supabase.from('transactions').select('*').eq('user_id', userId).gte('transaction_date', startStr).lte('transaction_date', endStr).order('transaction_date', { ascending: false }).limit(5000);
-        if (txns) {
-            const normalized = txns.map(t => ({ ...t, transaction_date: normalizeDate(t.transaction_date) }));
-            setTransactions(normalized);
+        try {
+            // Attempt to use the optimized RPC
+            const { data, error } = await supabase.rpc('get_view_data', {
+                p_user_id: userId,
+                p_start_date: startStr,
+                p_end_date: endStr,
+                p_current_month_start: currentStartStr,
+                p_current_month_end: currentEndStr,
+                p_today: todayStr
+            });
+
+            if (error) throw error;
+
+            // 1. Set View Data
+            setOpeningBalance(data.view_opening_balance);
+            const normalizedTxns = data.view_transactions.map((t: any) => ({ ...t, transaction_date: normalizeDate(t.transaction_date) }));
+            setTransactions(normalizedTxns);
+
+            // 2. Process Current Month Stats
+            processCurrentMonthStats(
+                userId, 
+                data.current_opening_balance, 
+                data.current_transactions, 
+                currentMonthStart, 
+                currentMonthEnd
+            );
+
+        } catch (err) {
+            console.warn("RPC 'get_view_data' failed or not found, falling back to client-side queries", err);
+            
+            // --- FALLBACK LOGIC ---
+            let prevBalance = 0;
+            try {
+                const snapshotDate = new Date(startDate);
+                snapshotDate.setMonth(snapshotDate.getMonth() - 1);
+                const snapshotMonthKey = `${snapshotDate.getFullYear()}-${String(snapshotDate.getMonth() + 1).padStart(2, '0')}`;
+                const { data: snapshot } = await supabase.from('monthly_snapshots').select('balance').eq('user_id', userId).eq('month', snapshotMonthKey).single();
+                if (snapshot) prevBalance = snapshot.balance;
+                else {
+                    const { data: historyData } = await supabase.from('transactions').select('amount').eq('user_id', userId).lt('transaction_date', startStr).neq('status', 'skipped');
+                    prevBalance = historyData?.reduce((sum, t) => sum + t.amount, 0) || 0;
+                }
+            } catch (e) { console.warn('Balance fetch error', e); }
+            
+            const { data: txns } = await supabase.from('transactions').select('*').eq('user_id', userId).gte('transaction_date', startStr).lte('transaction_date', endStr).order('transaction_date', { ascending: false }).limit(5000);
+            
+            // Batch state updates
+            setOpeningBalance(prevBalance);
+            if (txns) {
+                const normalized = txns.map(t => ({ ...t, transaction_date: normalizeDate(t.transaction_date) }));
+                setTransactions(normalized);
+            }
+            await updateCurrentMonthStatsFallback(userId, currentStartStr, currentEndStr, currentMonthStart, currentMonthEnd);
         }
-        await updateCurrentMonthStats(userId);
     };
 
-    const updateCurrentMonthStats = async (userId: string) => {
-        const todayD = new Date();
-        const startOfMonth = new Date(todayD.getFullYear(), todayD.getMonth(), 1);
-        const startStr = startOfMonth.toISOString().split('T')[0];
-        const currentMonthKey = startStr.substring(0, 7);
+    const processCurrentMonthStats = (
+        userId: string, 
+        monthStartBalance: number, 
+        currentTxns: Transaction[], 
+        startOfMonth: Date, 
+        endOfMonth: Date
+    ) => {
+        setCurrentOpeningBalance(monthStartBalance);
+        const normalizedTxns = currentTxns.map(t => ({ ...t, transaction_date: normalizeDate(t.transaction_date) }));
+        setCurrentTransactions(normalizedTxns);
 
+        const todayStr = getTodayInTimezone(defaultTimezone);
+        const txnsUpToToday = normalizedTxns.filter(t => normalizeDate(t.transaction_date) <= todayStr && t.status !== 'skipped');
+        const balance = monthStartBalance + txnsUpToToday.reduce((a, t) => a + t.amount, 0);
+        setCurrentBalance(balance);
+
+        let running = monthStartBalance;
+        let lowest = Infinity;
+        let lowDay = 1;
+        const sorted = [...normalizedTxns].sort((a,b) => a.transaction_date.localeCompare(b.transaction_date));
+        for (let d = 1; d <= endOfMonth.getDate(); d++) {
+            const dStr = `${startOfMonth.getFullYear()}-${String(startOfMonth.getMonth()+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+            const daysTxns = sorted.filter(t => normalizeDate(t.transaction_date) === dStr && t.status !== 'skipped');
+            running += daysTxns.reduce((a, t) => a + t.amount, 0);
+            if (running < lowest) { lowest = running; lowDay = d; }
+        }
+        
+        let status: 'Healthy' | 'Caution' | 'Critical' = 'Healthy';
+        const threshold = userProfile?.balance_warning_threshold || 500;
+        if (lowest < 0) status = 'Critical';
+        else if (lowest < threshold) status = 'Caution';
+
+        setCurrentMonthStats({ status, lowestPoint: lowest, lowestDay: lowDay, monthName: startOfMonth.toLocaleString('default', { month: 'long' }) });
+    };
+
+    const updateCurrentMonthStatsFallback = async (
+        userId: string, 
+        startStr: string, 
+        endStr: string, 
+        startOfMonth: Date, 
+        endOfMonth: Date
+    ) => {
+        const currentMonthKey = startStr.substring(0, 7);
         let monthStartBalance = 0;
         const { data: snap } = await supabase.from('monthly_snapshots').select('balance').eq('user_id', userId).eq('month', currentMonthKey).single();
         if (snap) monthStartBalance = snap.balance;
@@ -205,33 +298,9 @@ export const GlobalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
              monthStartBalance = hist?.reduce((a, t) => a + t.amount, 0) || 0;
         }
 
-        const endOfMonth = new Date(todayD.getFullYear(), todayD.getMonth() + 1, 0);
-        const endStr = endOfMonth.toISOString().split('T')[0];
         const { data: currentTxns } = await supabase.from('transactions').select('*').eq('user_id', userId).gte('transaction_date', startStr).lte('transaction_date', endStr);
-
         if (currentTxns) {
-            const todayStr = getTodayInTimezone(defaultTimezone);
-            const txnsUpToToday = currentTxns.filter(t => normalizeDate(t.transaction_date) <= todayStr && t.status !== 'skipped');
-            const balance = monthStartBalance + txnsUpToToday.reduce((a, t) => a + t.amount, 0);
-            setCurrentBalance(balance);
-
-            let running = monthStartBalance;
-            let lowest = Infinity;
-            let lowDay = 1;
-            const sorted = [...currentTxns].sort((a,b) => a.transaction_date.localeCompare(b.transaction_date));
-            for (let d = 1; d <= endOfMonth.getDate(); d++) {
-                const dStr = `${todayD.getFullYear()}-${String(todayD.getMonth()+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-                const daysTxns = sorted.filter(t => normalizeDate(t.transaction_date) === dStr && t.status !== 'skipped');
-                running += daysTxns.reduce((a, t) => a + t.amount, 0);
-                if (running < lowest) { lowest = running; lowDay = d; }
-            }
-            
-            let status: 'Healthy' | 'Caution' | 'Critical' = 'Healthy';
-            const threshold = userProfile?.balance_warning_threshold || 500;
-            if (lowest < 0) status = 'Critical';
-            else if (lowest < threshold) status = 'Caution';
-
-            setCurrentMonthStats({ status, lowestPoint: lowest, lowestDay: lowDay, monthName: startOfMonth.toLocaleString('default', { month: 'long' }) });
+            processCurrentMonthStats(userId, monthStartBalance, currentTxns, startOfMonth, endOfMonth);
         }
     };
 
@@ -246,14 +315,31 @@ export const GlobalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const clearGhostTransactions = () => setGhostTransactions([]);
     const allTransactions = useMemo(() => [...transactions, ...ghostTransactions], [transactions, ghostTransactions]);
 
+    const handleSetViewDate = (date: Date) => {
+        setIsViewLoading(true);
+        setViewDate(date);
+
+        const [tYear, tMonth, tDay] = todayInTimezone.split('-').map(Number);
+        const isCurrentMonth = date.getFullYear() === tYear && (date.getMonth() + 1) === tMonth;
+
+        if (isCurrentMonth) {
+            setSelectedDate(todayInTimezone);
+        } else {
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            setSelectedDate(`${year}-${month}-01`);
+        }
+    };
+
     return (
         <GlobalContext.Provider value={{ 
             isAppLoading, userProfile, budgetGroups, transactionRules, budgetOverrides,
-            selectedDate, setSelectedDate, viewDate, setViewDate, isViewLoading,
-            activeHomeTab, setActiveHomeTab,
+            selectedDate, setSelectedDate, viewDate, setViewDate: handleSetViewDate, isViewLoading,
+            activeHomeTab, setActiveHomeTab, activeBudgetTab, setActiveBudgetTab,
+            activeInsightsTab, setActiveInsightsTab,
             refreshTrigger, triggerRefresh, showExpected, setShowExpected,
             userTimezone, updateUserTimezone, todayInTimezone,
-            transactions, openingBalance, currentMonthStats, currentBalance,
+            transactions, openingBalance, currentMonthStats, currentBalance, currentTransactions, currentOpeningBalance,
             ghostTransactions, allTransactions, addGhostTransactions, updateGhostTransaction, deleteGhostTransaction, clearGhostTransactions,
             ruleCandidate, setRuleCandidate
         }}>

@@ -11,243 +11,12 @@ import { TransactionForm } from '../components/TransactionForm';
 import { WhatIfForm } from '../components/WhatIfForm';
 import { EditBalanceForm } from '../components/EditBalanceForm';
 import { useGlobalContext } from '../context/GlobalContext';
-
-// --- Types ---
-interface ChartPoint {
-    day: number;
-    balance: number;
-    projectedBalance?: number;
-    isFuture: boolean;
-    isToday: boolean;
-}
+import { BalanceChart, ChartPoint } from '../components/BalanceChart';
+import { CircularProgress } from '../components/CircularProgress';
+import { CalendarView } from '../components/CalendarView';
+import { getPlannedAmount, getCalendarBurnRate } from '../utils/budgetUtils';
 
 // --- Helper Components ---
-
-const BalanceChart = ({ 
-    transactions, 
-    openingBalance,
-    currentDate, 
-    threshold,
-    todayStr,
-    burnRateInfo,
-    showProjected,
-    onPointHover
-}: { 
-    transactions: Transaction[], 
-    openingBalance: number,
-    currentDate: Date, 
-    threshold: number,
-    todayStr: string,
-    burnRateInfo: { rate: number, startDay: number, isProjected: boolean },
-    showProjected: boolean,
-    onPointHover: (point: ChartPoint | null) => void
-}) => {
-    const containerRef = useRef<HTMLDivElement>(null);
-    const [width, setWidth] = useState(300);
-    const height = 160; 
-    const padding = { top: 30, right: 0, bottom: 20, left: 0 };
-
-    const [activePoint, setActivePoint] = useState<ChartPoint | null>(null);
-
-    useEffect(() => {
-        if (containerRef.current) {
-            setWidth(containerRef.current.clientWidth);
-        }
-    }, []);
-
-    // Notify parent when active point changes
-    useEffect(() => {
-        onPointHover(activePoint);
-    }, [activePoint, onPointHover]);
-
-    const data = useMemo(() => {
-        const year = currentDate.getFullYear();
-        const month = currentDate.getMonth();
-        
-        const startOfMonthStr = `${year}-${String(month + 1).padStart(2, '0')}-01`;
-        const daysInMonth = new Date(year, month + 1, 0).getDate();
-
-        const windowPriorBalance = transactions
-            .filter(t => normalizeDate(t.transaction_date) < startOfMonthStr && t.status !== 'skipped')
-            .reduce((acc, t) => acc + t.amount, 0);
-
-        const initialBalance = openingBalance + windowPriorBalance;
-
-        const points: ChartPoint[] = [];
-        let currentBalance = initialBalance;
-
-        for (let d = 1; d <= daysInMonth; d++) {
-            const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-            const dayTxns = transactions.filter(t => normalizeDate(t.transaction_date) === dateStr && t.status !== 'skipped');
-            const dayTotal = dayTxns.reduce((acc, t) => acc + t.amount, 0);
-            
-            currentBalance += dayTotal;
-
-            let projected = undefined;
-            if (showProjected && burnRateInfo.isProjected && d >= burnRateInfo.startDay) {
-                const daysIntoProjection = d - burnRateInfo.startDay + 1;
-                const variableDrag = daysIntoProjection * burnRateInfo.rate;
-                projected = currentBalance - variableDrag;
-            }
-
-            points.push({
-                day: d,
-                balance: currentBalance,
-                projectedBalance: projected,
-                isFuture: dateStr > todayStr,
-                isToday: dateStr === todayStr
-            });
-        }
-        return points;
-    }, [transactions, openingBalance, currentDate, todayStr, showProjected, burnRateInfo]);
-
-    if (data.length <= 1) return null;
-
-    const todayPoint = data.find(d => d.isToday);
-
-    const balances = data.map(d => d.balance);
-    const projectedBalances = data.map(d => d.projectedBalance).filter(b => b !== undefined) as number[];
-    const allValues = [...balances, ...projectedBalances, 0, threshold];
-
-    const minBal = Math.min(...allValues); 
-    const maxBal = Math.max(...allValues);
-    const range = maxBal - minBal || 1; 
-    const paddedMin = minBal - (range * 0.1);
-    const paddedMax = maxBal + (range * 0.1);
-    const activeRange = paddedMax - paddedMin;
-
-    const mapX = (day: number) => {
-        const maxDays = data.length; 
-        return padding.left + ((day - 1) / (maxDays - 1)) * (width - padding.left - padding.right);
-    };
-
-    const mapY = (val: number) => {
-        return height - padding.bottom - ((val - paddedMin) / activeRange) * (height - padding.top - padding.bottom);
-    };
-
-    const yZero = mapY(0);
-    const yThreshold = mapY(threshold);
-
-    const createPath = (points: ChartPoint[], key: 'balance' | 'projectedBalance') => {
-        return points
-            .filter(p => p[key] !== undefined)
-            .map((p, i) => {
-                const prefix = i === 0 ? 'M' : 'L';
-                return `${prefix} ${mapX(p.day)} ${mapY(p[key] as number)}`;
-            }).join(' ');
-    };
-
-    const futureIndex = data.findIndex(d => d.isFuture);
-    let pastPoints = data;
-    let futurePoints: ChartPoint[] = [];
-
-    if (futureIndex !== -1) {
-        pastPoints = data.slice(0, futureIndex + 1); 
-        futurePoints = data.slice(futureIndex); 
-    }
-
-    const solidPath = createPath(pastPoints, 'balance');
-    const dottedPath = futurePoints.length > 0 ? createPath(futurePoints, 'balance') : '';
-    const projectedPath = showProjected ? createPath(data, 'projectedBalance') : '';
-
-    const handleInteraction = (clientX: number) => {
-        if (!containerRef.current) return;
-        const rect = containerRef.current.getBoundingClientRect();
-        const x = clientX - rect.left;
-        const chartWidth = width - padding.left - padding.right;
-        
-        const maxDays = data.length;
-        const rawDayIndex = ((x - padding.left) / chartWidth) * (maxDays - 1);
-        const index = Math.max(0, Math.min(Math.round(rawDayIndex), maxDays - 1));
-        
-        setActivePoint(data[index]);
-    };
-
-    return (
-        <div 
-            ref={containerRef} 
-            className="w-full relative touch-none" 
-            style={{ height: `${height}px` }}
-            onPointerMove={(e) => handleInteraction(e.clientX)}
-            onPointerLeave={() => setActivePoint(null)}
-            onTouchStart={(e) => e.stopPropagation()}
-            onTouchMove={(e) => {
-                e.stopPropagation();
-                handleInteraction(e.touches[0].clientX);
-            }}
-            onTouchEnd={(e) => {
-                e.stopPropagation();
-                setActivePoint(null);
-            }}
-        >
-            <svg width={width} height={height} className="overflow-visible">
-                <defs>
-                    <linearGradient id="chartColorGradient" gradientUnits="userSpaceOnUse" x1="0" y1={height - padding.bottom} x2="0" y2={padding.top}>
-                        <stop offset="0%" stopColor="#f87171" />
-                        <stop offset="50%" stopColor="#fbbf24" />
-                        <stop offset="100%" stopColor="#34d399" />
-                    </linearGradient>
-                </defs>
-
-                <line x1={padding.left} y1={yZero} x2={width - padding.right} y2={yZero} stroke="#fff" strokeOpacity="0.1" strokeWidth="1" />
-                <line x1={padding.left} y1={yThreshold} x2={width - padding.right} y2={yThreshold} stroke="#fbbf24" strokeOpacity="0.3" strokeDasharray="4 4" strokeWidth="1" />
-
-                {projectedPath && (
-                     <path d={projectedPath} fill="none" stroke="#FF4D00" strokeWidth="2" strokeOpacity="0.6" strokeDasharray="2 2" />
-                )}
-
-                <path d={solidPath} fill="none" stroke="#2E93FA" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-                {dottedPath && <path d={dottedPath} fill="none" stroke="#2E93FA" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="3 3" strokeOpacity="0.5" />}
-
-                {/* Today Circle */}
-                {todayPoint && (
-                    <g>
-                        <circle 
-                            cx={mapX(todayPoint.day)} 
-                            cy={mapY(todayPoint.balance)} 
-                            r="8" 
-                            fill="#fff"
-                            opacity="0.2"
-                        >
-                            <animate attributeName="r" values="6;12;6" dur="3s" repeatCount="indefinite" />
-                            <animate attributeName="opacity" values="0.6;0;0.6" dur="3s" repeatCount="indefinite" />
-                        </circle>
-                        <circle 
-                            cx={mapX(todayPoint.day)} 
-                            cy={mapY(todayPoint.balance)} 
-                            r="5" 
-                            fill="#0F172A" 
-                            stroke="#fff" 
-                            strokeWidth="2" 
-                        />
-                    </g>
-                )}
-
-                {activePoint && (
-                    <g>
-                        <line x1={mapX(activePoint.day)} y1={padding.top} x2={mapX(activePoint.day)} y2={height - padding.bottom} stroke="#cbd5e1" strokeWidth="1" strokeOpacity="0.5" />
-                        <circle cx={mapX(activePoint.day)} cy={mapY(activePoint.balance)} r="4" fill="#34d399" stroke="#0f172a" strokeWidth="2" />
-                    </g>
-                )}
-            </svg>
-        </div>
-    );
-};
-
-const CircularProgress = ({ percentActual, remaining }: { percentActual: number, remaining: number }) => {
-    const radius = 18;
-    const circumference = 2 * Math.PI * radius;
-    const strokeActual = ((Math.min(percentActual, 100)) / 100) * circumference;
-    return (
-        <div className="relative w-12 h-12 flex items-center justify-center">
-            <svg className="w-full h-full -rotate-90 transform" viewBox="0 0 40 40">
-                <circle className="text-slate-800" strokeWidth="4" stroke="currentColor" fill="transparent" r={radius} cx="20" cy="20" />
-                <circle className={remaining < 0 ? "text-red-500" : "text-emerald-400"} strokeWidth="4" strokeDasharray={circumference} strokeDashoffset={circumference - strokeActual} strokeLinecap="round" stroke="currentColor" fill="transparent" r={radius} cx="20" cy="20" />
-            </svg>
-            <div className="absolute text-[9px] font-bold text-white">{Math.round(percentActual)}%</div>
-        </div>
-    );
-};
 
 export const Home: React.FC = () => {
     const navigate = useNavigate();
@@ -256,6 +25,9 @@ export const Home: React.FC = () => {
         setSelectedDate: setSelectedDateStr, 
         triggerRefresh, 
         allTransactions,
+        currentTransactions,
+        currentOpeningBalance,
+        ghostTransactions,
         openingBalance,
         todayInTimezone,
         viewDate,
@@ -272,6 +44,7 @@ export const Home: React.FC = () => {
     
     const date = viewDate;
     const transactions = allTransactions;
+    const dashboardTransactions = useMemo(() => [...currentTransactions, ...ghostTransactions], [currentTransactions, ghostTransactions]);
 
     const [lowBalanceThreshold, setLowBalanceThreshold] = useState(500);
     const [preferences, setPreferences] = useState<{ hidden_categories: string[], dashboard_order: string[] }>({
@@ -292,6 +65,7 @@ export const Home: React.FC = () => {
     const [showRightArrow, setShowRightArrow] = useState(false);
     const [showProjected, setShowProjected] = useState(false);
     const [showChartProjected, setShowChartProjected] = useState(false);
+    const [chartMonthsToShow, setChartMonthsToShow] = useState<number>(1);
     const touchStartRef = useRef<{ x: number, y: number } | null>(null);
     const isScrollingRef = useRef(false);
     const [dragOffset, setDragOffset] = useState(0);
@@ -319,100 +93,52 @@ export const Home: React.FC = () => {
         updatePreferences({ ...preferences, hidden_categories: newHidden });
     };
 
-    const handleSortUpdate = (catId: string, direction: 'up' | 'down') => {
-        const allVarIds = visibleVariableExpenses.map(v => v.id); 
-        let currentOrder = preferences.dashboard_order || [];
-        const currentIndex = currentOrder.indexOf(catId);
-        if (currentIndex === -1) {
-             currentOrder = [...currentOrder, catId];
-        }
-        const newOrder = [...currentOrder];
-        updatePreferences({ ...preferences, dashboard_order: newOrder });
-    };
-
-    const getPlannedAmount = (cat: BudgetCategory, monthKey: string) => {
-        const override = budgetOverrides.find(o => o.category_id === cat.id && o.month === monthKey);
-        return override ? override.amount : cat.planned_amount;
-    };
-
-    const getCalendarBurnRate = (viewDate: Date) => {
-        const today = new Date(todayInTimezone);
-        if (viewDate.getFullYear() < today.getFullYear() || (viewDate.getFullYear() === today.getFullYear() && viewDate.getMonth() < today.getMonth())) return { rate: 0, startDay: 0, isProjected: false };
-        const monthKey = `${viewDate.getFullYear()}-${String(viewDate.getMonth() + 1).padStart(2, '0')}`;
-        const daysInMonth = new Date(viewDate.getFullYear(), viewDate.getMonth() + 1, 0).getDate();
-        let totalVarPlanned = 0;
-        budgetGroups.forEach(g => { if (g.type === 'expense' || g.type === 'goal') g.categories.filter(c => !c.is_fixed).forEach(c => totalVarPlanned += getPlannedAmount(c, monthKey)); });
-        const todayDate = today.getDate();
-        return { rate: totalVarPlanned / daysInMonth, startDay: todayDate, isProjected: true };
-    };
-
-    const calculateCumulativeOffset = (targetDate: Date) => {
-        return 0; 
-    };
-
-    const renderCalendar = () => {
-        const days = [];
-        const firstDay = new Date(date.getFullYear(), date.getMonth(), 1).getDay();
-        const daysInMonth = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
-        for (let i = 0; i < firstDay; i++) days.push(<div key={`empty-${i}`} />);
+    const allVariableExpenses = useMemo(() => {
+        const [tYear, tMonth] = todayInTimezone.split('-').map(Number);
+        const currentMonthDate = new Date(tYear, tMonth - 1, 1);
         
-        const { rate: burnRate, startDay: burnStartDay, isProjected: canProject } = getCalendarBurnRate(date);
-        
-        const startOfMonthStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-01`;
-        const offset = transactions.filter(t => normalizeDate(t.transaction_date) < startOfMonthStr && t.status !== 'skipped').reduce((a,x)=>a+x.amount, 0) + openingBalance;
-
-        for (let d = 1; d <= daysInMonth; d++) {
-            const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-            const activeTxns = transactions.filter(t => normalizeDate(t.transaction_date) === dateStr && t.status !== 'skipped');
-            const dayTotal = activeTxns.reduce((acc, t) => acc + t.amount, 0);
-            
-            const runningBal = offset + transactions.filter(t => normalizeDate(t.transaction_date) >= startOfMonthStr && normalizeDate(t.transaction_date) <= dateStr && t.status !== 'skipped').reduce((a,x)=>a+x.amount, 0);
-            
-            let finalBalance = runningBal;
-            if (showProjected && canProject && d >= burnStartDay) {
-                finalBalance -= (d - burnStartDay + 1) * burnRate;
-            }
-
-            const isToday = todayInTimezone === dateStr;
-            const isNegative = finalBalance < 0;
-            const isLow = !isNegative && finalBalance < lowBalanceThreshold;
-
-            days.push(
-                <div key={d} onClick={() => setSelectedDateStr(dateStr)} className={`relative h-14 rounded-lg border p-1 flex flex-col justify-between cursor-pointer transition-all active:scale-95 ${isNegative ? "bg-red-500/20 border-red-500/30" : isLow ? "bg-yellow-500/10 border-yellow-500/20" : "bg-slate-800/30 border-white/5"} ${selectedDateStr === dateStr ? "ring-1 ring-white" : ""} ${isToday ? "border-emerald-400 border-2" : ""}`}>
-                    <span className={`text-[9px] font-bold ${isToday ? 'text-emerald-300' : 'text-slate-400'}`}>{d}</span>
-                    <div className="flex justify-center -mt-1">{activeTxns.length > 0 && <span className={`text-[9px] font-bold ${dayTotal >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{Math.round(dayTotal)}</span>}</div>
-                    <span className="text-[9px] font-bold text-center opacity-80">${Math.round(finalBalance)}</span>
-                </div>
-            );
-        }
-        return days;
-    };
-
-    const visibleVariableExpenses = useMemo(() => {
-        const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-        const startStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-01`;
-        const endStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate()}`;
+        const monthKey = `${currentMonthDate.getFullYear()}-${String(currentMonthDate.getMonth() + 1).padStart(2, '0')}`;
+        const startStr = `${currentMonthDate.getFullYear()}-${String(currentMonthDate.getMonth() + 1).padStart(2, '0')}-01`;
+        const endStr = `${currentMonthDate.getFullYear()}-${String(currentMonthDate.getMonth() + 1).padStart(2, '0')}-${new Date(currentMonthDate.getFullYear(), currentMonthDate.getMonth() + 1, 0).getDate()}`;
         
         let vars: any[] = [];
         budgetGroups.forEach(g => {
             if (g.type === 'expense' || g.type === 'goal') {
                 g.categories.filter(c => !c.is_fixed).forEach(c => {
-                    const planned = getPlannedAmount(c, monthKey);
-                    const actual = transactions.filter(t => t.category === c.name && normalizeDate(t.transaction_date) >= startStr && normalizeDate(t.transaction_date) <= endStr && (t.amount < 0 || g.type === 'goal') && t.status !== 'skipped').reduce((a, t) => a + Math.abs(t.amount), 0);
+                    const planned = getPlannedAmount(c, monthKey, budgetOverrides);
+                    const actual = dashboardTransactions.filter(t => t.category === c.name && normalizeDate(t.transaction_date) >= startStr && normalizeDate(t.transaction_date) <= endStr && (t.amount < 0 || g.type === 'goal') && t.status !== 'skipped').reduce((a, t) => a + Math.abs(t.amount), 0);
                     vars.push({ id: c.id, name: c.name, planned, remaining: planned - actual, percentActual: planned > 0 ? (actual/planned)*100 : 0 });
                 });
             }
         });
         if (preferences.dashboard_order?.length) vars.sort((a,b) => (preferences.dashboard_order.indexOf(a.id) === -1 ? 999 : preferences.dashboard_order.indexOf(a.id)) - (preferences.dashboard_order.indexOf(b.id) === -1 ? 999 : preferences.dashboard_order.indexOf(b.id)));
-        return vars.filter(v => !preferences.hidden_categories.includes(v.id));
-    }, [budgetGroups, transactions, date, budgetOverrides, preferences]);
+        return vars;
+    }, [budgetGroups, dashboardTransactions, todayInTimezone, budgetOverrides, preferences.dashboard_order]);
+
+    const visibleVariableExpenses = useMemo(() => {
+        return allVariableExpenses.filter(v => !preferences.hidden_categories.includes(v.id));
+    }, [allVariableExpenses, preferences.hidden_categories]);
+
+    const handleSortUpdate = (catId: string, direction: 'up' | 'down') => {
+        const currentSortedIds = allVariableExpenses.map(v => v.id);
+        const idx = currentSortedIds.indexOf(catId);
+        if (idx === -1) return;
+        
+        const newOrder = [...currentSortedIds];
+        if (direction === 'up' && idx > 0) {
+            [newOrder[idx], newOrder[idx - 1]] = [newOrder[idx - 1], newOrder[idx]];
+        } else if (direction === 'down' && idx < newOrder.length - 1) {
+            [newOrder[idx], newOrder[idx + 1]] = [newOrder[idx + 1], newOrder[idx]];
+        }
+        
+        updatePreferences({ ...preferences, dashboard_order: newOrder });
+    };
 
     const handleScroll = (dir: 'left' | 'right') => scrollRef.current?.scrollBy({ left: dir === 'left' ? -200 : 200, behavior: 'smooth' });
     const checkScroll = () => { if (scrollRef.current) { const { scrollLeft, scrollWidth, clientWidth } = scrollRef.current; setShowLeftArrow(scrollLeft > 0); setShowRightArrow(scrollLeft < scrollWidth - clientWidth - 5); } };
     useEffect(() => { checkScroll(); window.addEventListener('resize', checkScroll); return () => window.removeEventListener('resize', checkScroll); }, [visibleVariableExpenses]);
 
     const cmStatus = currentMonthStats?.status || 'Healthy';
-    const StatusIconComp = cmStatus === 'Critical' ? ShieldAlert : cmStatus === 'Caution' ? ShieldOff : ShieldCheck;
 
     const onTouchStart = (e: React.TouchEvent) => {
         touchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
@@ -478,6 +204,108 @@ export const Home: React.FC = () => {
         transition: isDragging ? 'none' : 'transform 300ms cubic-bezier(0.2, 0.8, 0.2, 1)'
     };
 
+    const { restOfCurrentMonthStats, nextMonthStats, burnRates } = useMemo(() => {
+        const [tYear, tMonth, tDay] = todayInTimezone.split('-').map(Number);
+        const currentMonthDate = new Date(tYear, tMonth - 1, 1);
+        const nextMonthDate = new Date(tYear, tMonth, 1);
+        
+        // 1. Calculate Burn Rates for next 6 months
+        const rates: Record<string, { rate: number, startDay: number, isProjected: boolean }> = {};
+        for (let i = 0; i < 6; i++) {
+            const d = new Date(tYear, tMonth - 1 + i, 1);
+            const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+            const info = getCalendarBurnRate(d, todayInTimezone, budgetGroups, budgetOverrides, dashboardTransactions);
+            rates[key] = info;
+        }
+
+        // 2. Simulate Current Month (Rest)
+        const currentMonthKey = `${tYear}-${String(tMonth).padStart(2,'0')}`;
+        const currentBurn = rates[currentMonthKey];
+        const daysInCurrentMonth = new Date(tYear, tMonth, 0).getDate();
+        
+        // Initial Balance for Current Month Simulation
+        // We start from currentOpeningBalance + transactions up to yesterday?
+        // Actually, let's just replay the whole month to be safe and consistent.
+        const startOfCurrentMonthStr = `${tYear}-${String(tMonth).padStart(2, '0')}-01`;
+        const priorTxns = dashboardTransactions.filter(t => normalizeDate(t.transaction_date) < startOfCurrentMonthStr && t.status !== 'skipped');
+        let runningBalance = currentOpeningBalance + priorTxns.reduce((acc, t) => acc + t.amount, 0);
+        
+        let currentMonthLowest = Infinity;
+        let currentMonthLowDate = '';
+        
+        // Replay up to today to get current state, then project
+        for (let d = 1; d <= daysInCurrentMonth; d++) {
+            const dateStr = `${tYear}-${String(tMonth).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+            const dayTxns = dashboardTransactions.filter(t => normalizeDate(t.transaction_date) === dateStr && t.status !== 'skipped');
+            runningBalance += dayTxns.reduce((acc, t) => acc + t.amount, 0);
+            
+            // Apply burn if applicable
+            if (currentBurn.isProjected && d >= currentBurn.startDay) {
+                // For simulation, we subtract the daily rate from the running balance
+                // Note: This modifies runningBalance permanently for the simulation chain
+                runningBalance -= currentBurn.rate;
+            }
+            
+            // Only track stats for "Rest of Month" (from today onwards)
+            if (d >= tDay) {
+                if (runningBalance < currentMonthLowest) {
+                    currentMonthLowest = runningBalance;
+                    currentMonthLowDate = dateStr;
+                }
+            }
+        }
+        
+        const endOfCurrentMonthBalance = runningBalance;
+        
+        // 3. Simulate Next Month
+        const nextMonthKey = `${nextMonthDate.getFullYear()}-${String(nextMonthDate.getMonth()+1).padStart(2,'0')}`;
+        const nextBurn = rates[nextMonthKey];
+        const daysInNextMonth = new Date(nextMonthDate.getFullYear(), nextMonthDate.getMonth() + 1, 0).getDate();
+        
+        let nextMonthRunning = endOfCurrentMonthBalance;
+        let nextMonthLowest = Infinity;
+        let nextMonthLowDate = '';
+        
+        for (let d = 1; d <= daysInNextMonth; d++) {
+            const dateStr = `${nextMonthDate.getFullYear()}-${String(nextMonthDate.getMonth()+1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+            const dayTxns = dashboardTransactions.filter(t => normalizeDate(t.transaction_date) === dateStr && t.status !== 'skipped');
+            nextMonthRunning += dayTxns.reduce((acc, t) => acc + t.amount, 0);
+            
+            if (nextBurn.isProjected) {
+                nextMonthRunning -= nextBurn.rate;
+            }
+            
+            if (nextMonthRunning < nextMonthLowest) {
+                nextMonthLowest = nextMonthRunning;
+                nextMonthLowDate = dateStr;
+            }
+        }
+
+        const getStatus = (lowest: number) => {
+            if (lowest < 0) return 'Critical';
+            if (lowest < lowBalanceThreshold) return 'Caution';
+            return 'Healthy';
+        };
+
+        return {
+            restOfCurrentMonthStats: { 
+                lowest: currentMonthLowest, 
+                lowDateStr: currentMonthLowDate, 
+                status: getStatus(currentMonthLowest), 
+                monthName: getMonthName(tMonth - 1) 
+            },
+            nextMonthStats: { 
+                lowest: nextMonthLowest, 
+                lowDateStr: nextMonthLowDate, 
+                status: getStatus(nextMonthLowest), 
+                monthName: getMonthName(nextMonthDate.getMonth()) 
+            },
+            burnRates: rates
+        };
+    }, [dashboardTransactions, currentOpeningBalance, todayInTimezone, budgetGroups, budgetOverrides, lowBalanceThreshold]);
+
+    const StatusIconComp = restOfCurrentMonthStats.status === 'Critical' ? ShieldAlert : restOfCurrentMonthStats.status === 'Caution' ? ShieldOff : ShieldCheck;
+
     // Helper for styling based on balance
     const getStylingForBalance = (bal: number) => {
         if (bal < 0) return { text: 'text-relief-critical', border: 'border-relief-critical/50', bg: 'bg-relief-critical/10' };
@@ -490,10 +318,13 @@ export const Home: React.FC = () => {
         : currentBalance;
     
     const displayedLabel = hoveredChartPoint 
-        ? `Balance on ${getMonthName(new Date().getMonth()).substring(0,3)} ${hoveredChartPoint.day}` 
+        ? `Balance on ${new Date(hoveredChartPoint.dateStr).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' })}` 
         : "Today's Balance";
     
-    const balanceStyle = hoveredChartPoint ? getStylingForBalance(displayedBalance) : { text: 'text-white', border: 'border-white/5', bg: 'bg-[#0F172A]' };
+    const currentBalanceStyle = getStylingForBalance(currentBalance);
+    const balanceStyle = hoveredChartPoint 
+        ? getStylingForBalance(displayedBalance) 
+        : { text: currentBalanceStyle.text, border: 'border-white/5', bg: 'bg-[#0F172A]' };
 
     return (
         <div className="flex flex-col animate-page-enter">
@@ -516,32 +347,41 @@ export const Home: React.FC = () => {
                                 <span className="text-[10px] font-bold uppercase text-relief-text-secondary tracking-wider mt-1">{displayedLabel}</span>
                             </div>
                             <BalanceChart 
-                                transactions={transactions} 
-                                openingBalance={openingBalance} 
+                                transactions={dashboardTransactions} 
+                                openingBalance={currentOpeningBalance} 
                                 currentDate={new Date()} 
                                 threshold={lowBalanceThreshold} 
                                 todayStr={todayInTimezone} 
-                                burnRateInfo={getCalendarBurnRate(new Date())} 
+                                burnRates={burnRates}
                                 showProjected={showChartProjected}
+                                monthsToShow={chartMonthsToShow}
                                 onPointHover={setHoveredChartPoint}
                             />
+                            <div className="flex items-center justify-center gap-2 pb-4 pt-2">
+                                <button onClick={() => setChartMonthsToShow(1)} className={`text-[10px] font-bold px-3 py-1.5 rounded-full transition-colors ${chartMonthsToShow === 1 ? 'bg-white/20 text-white' : 'bg-white/5 text-slate-400 hover:bg-white/10'}`}>Current</button>
+                                <button onClick={() => setChartMonthsToShow(3)} className={`text-[10px] font-bold px-3 py-1.5 rounded-full transition-colors ${chartMonthsToShow === 3 ? 'bg-white/20 text-white' : 'bg-white/5 text-slate-400 hover:bg-white/10'}`}>3 Months</button>
+                                <button onClick={() => setChartMonthsToShow(6)} className={`text-[10px] font-bold px-3 py-1.5 rounded-full transition-colors ${chartMonthsToShow === 6 ? 'bg-white/20 text-white' : 'bg-white/5 text-slate-400 hover:bg-white/10'}`}>6 Months</button>
+                            </div>
                         </div>
 
                         <div className="grid grid-cols-2 gap-3">
-                            <div className={`p-3 bg-[#0F172A] border border-white/5 shadow-lg shadow-black/40 rounded-2xl flex flex-col items-center justify-center relative overflow-hidden ${cmStatus === 'Critical' ? 'border-relief-critical/20' : cmStatus === 'Caution' ? 'border-relief-warning/20' : 'border-relief-primary/20'}`}>
-                                <div className="relative z-10 flex flex-col items-center">
-                                    <div className="flex items-center gap-1.5 mb-1"><StatusIconComp className={`w-4 h-4 ${cmStatus==='Critical'?'text-relief-critical':cmStatus==='Caution'?'text-relief-warning':'text-relief-primary'}`} /><span className="text-[10px] font-bold uppercase text-relief-text-secondary tracking-wider">Status</span></div>
-                                    <span className={`text-lg font-bold ${cmStatus==='Critical'?'text-relief-critical':cmStatus==='Caution'?'text-relief-warning':'text-relief-primary'}`}>{cmStatus}</span>
+                            <div className={`p-3 bg-[#0F172A] border border-white/5 shadow-lg shadow-black/40 rounded-2xl flex flex-col items-center justify-center relative overflow-hidden ${restOfCurrentMonthStats.status === 'Critical' ? 'border-relief-critical/20' : restOfCurrentMonthStats.status === 'Caution' ? 'border-relief-warning/20' : 'border-relief-primary/20'}`}>
+                                <div className="relative z-10 flex flex-col items-center text-center">
+                                    <div className="flex items-center gap-1.5 mb-1"><StatusIconComp className={`w-4 h-4 ${restOfCurrentMonthStats.status==='Critical'?'text-relief-critical':restOfCurrentMonthStats.status==='Caution'?'text-relief-warning':'text-relief-primary'}`} /><span className="text-[10px] font-bold uppercase text-relief-text-secondary tracking-wider">Status</span></div>
+                                    <span className={`text-lg font-bold ${restOfCurrentMonthStats.status==='Critical'?'text-relief-critical':restOfCurrentMonthStats.status==='Caution'?'text-relief-warning':'text-relief-primary'}`}>{restOfCurrentMonthStats.status}</span>
+                                    <span className="text-[8px] text-slate-400 mt-1 leading-tight">Your lowest projected balance for the rest of this month is ${Math.round(restOfCurrentMonthStats.lowest)} on {restOfCurrentMonthStats.lowDateStr ? new Date(restOfCurrentMonthStats.lowDateStr).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' }) : 'N/A'}.</span>
                                 </div>
                             </div>
-                            <button onClick={() => setShowCushionModal(true)} className="p-3 bg-[#0F172A] border border-white/5 shadow-lg shadow-black/40 rounded-2xl flex flex-col items-center justify-center">
-                                <span className="text-[9px] font-bold uppercase text-relief-text-secondary mb-1">Forecast</span>
-                                <span className="text-lg font-bold text-relief-text-primary italic">View Details</span>
+                            <button onClick={() => setShowCushionModal(true)} className="p-3 bg-[#0F172A] border border-white/5 shadow-lg shadow-black/40 rounded-2xl flex flex-col items-center justify-center relative text-center">
+                                <Info className="w-3 h-3 text-slate-500 absolute top-2 right-2" />
+                                <span className="text-[9px] font-bold uppercase text-relief-text-secondary mb-1">{nextMonthStats.monthName}'s Forecast</span>
+                                <span className={`text-lg font-bold ${nextMonthStats.status==='Critical'?'text-relief-critical':nextMonthStats.status==='Caution'?'text-relief-warning':'text-relief-primary'}`}>{nextMonthStats.status}</span>
+                                <span className="text-[8px] text-slate-400 mt-1 leading-tight">Your lowest projected balance next month is ${Math.round(nextMonthStats.lowest)} on {nextMonthStats.lowDateStr ? new Date(nextMonthStats.lowDateStr).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' }) : 'N/A'}.</span>
                             </button>
                         </div>
 
                         <div className="p-4 bg-[#0F172A] border border-white/5 shadow-lg shadow-black/40 rounded-2xl relative">
-                            <div className="flex items-center justify-between mb-3"><span className="text-[10px] font-bold uppercase text-relief-text-secondary tracking-wider">Expenses</span><button onClick={() => setShowSortModal(true)} className="p-1 rounded hover:bg-white/10 text-relief-text-secondary"><Settings size={14} /></button></div>
+                            <div className="flex items-center justify-between mb-3"><span className="text-[10px] font-bold uppercase text-relief-text-secondary tracking-wider">Variable Expenses</span><button onClick={() => setShowSortModal(true)} className="p-1 rounded hover:bg-white/10 text-relief-text-secondary"><Settings size={14} /></button></div>
                             <div className="relative group">
                                 {showLeftArrow && <button onClick={() => handleScroll('left')} className="absolute left-0 top-1/2 -translate-y-1/2 z-10 w-8 h-8 rounded-full bg-relief-surface border border-relief-border flex items-center justify-center text-white shadow-lg"><ChevronLeft size={16} /></button>}
                                 <div 
@@ -552,12 +392,14 @@ export const Home: React.FC = () => {
                                     onTouchMove={(e) => e.stopPropagation()}
                                     onTouchEnd={(e) => e.stopPropagation()}
                                 >
-                                    {visibleVariableExpenses.map(v => (
+                                    {visibleVariableExpenses.map(v => {
+                                        const { emoji } = parseCategoryName(v.name);
+                                        return (
                                         <div key={v.id} className="flex-shrink-0 w-[31%] p-3 rounded-xl bg-relief-bg border border-relief-border flex flex-col items-center gap-2">
-                                            <CircularProgress percentActual={v.percentActual} remaining={v.remaining} />
-                                            <div className="text-center w-full"><div className="text-[10px] font-bold text-relief-text-primary truncate">{v.name}</div><div className={`text-[10px] font-bold ${v.remaining < 0 ? 'text-relief-critical' : 'text-relief-text-secondary'}`}>${Math.round(v.remaining)}</div></div>
+                                            <CircularProgress percentActual={v.percentActual} remaining={v.remaining} emoji={emoji} />
+                                            <div className="text-center w-full"><div className={`text-[10px] font-bold ${v.remaining < 0 ? 'text-relief-critical' : 'text-relief-text-secondary'}`}>${Math.round(v.remaining)} left</div></div>
                                         </div>
-                                    ))}
+                                    )})}
                                 </div>
                                 {showRightArrow && <button onClick={() => handleScroll('right')} className="absolute right-0 top-1/2 -translate-y-1/2 z-10 w-8 h-8 rounded-full bg-relief-surface border border-relief-border flex items-center justify-center text-white shadow-lg"><ChevronRight size={16} /></button>}
                             </div>
@@ -571,14 +413,17 @@ export const Home: React.FC = () => {
                                 </div>
                             </div>
                             <div className="space-y-2">
-                                {transactions
+                                {dashboardTransactions
                                     .filter(t => t.status === 'expected' && normalizeDate(t.transaction_date) >= todayInTimezone)
                                     .sort((a, b) => normalizeDate(a.transaction_date).localeCompare(normalizeDate(b.transaction_date)))
                                     .slice(0, 5)
                                     .map(t => {
                                         const { emoji } = parseCategoryName(t.category || '');
+                                        const isPastDue = t.status === 'expected' && normalizeDate(t.transaction_date) < todayInTimezone;
+                                        const isExpected = t.status === 'expected';
+                                        
                                         return (
-                                        <div key={t.id} onClick={() => setEditingTxn(t)} className="flex items-center justify-between p-3 rounded-xl bg-relief-bg border border-relief-border hover:bg-white/5 transition-colors cursor-pointer group">
+                                        <div key={t.id} onClick={() => setEditingTxn(t)} className={`flex items-center justify-between p-3 rounded-xl bg-relief-bg border border-relief-border hover:bg-white/5 transition-colors cursor-pointer group ${isExpected && !isPastDue ? 'opacity-50' : ''}`}>
                                             <div className="overflow-hidden">
                                                 <div className="text-xs font-bold text-relief-text-primary truncate group-hover:text-relief-primary transition-colors">
                                                     {emoji && <span className="mr-1.5">{emoji}</span>}
@@ -598,56 +443,26 @@ export const Home: React.FC = () => {
                     </div>
 
                     {/* CALENDAR */}
-                    <div className="w-1/2 px-4 pt-2 pb-10 space-y-4 transition-opacity duration-300 opacity-100">
-                        <div className="p-3 bg-[#0F172A] border border-white/5 shadow-lg shadow-black/40 rounded-2xl">
-                            <div className="flex items-center justify-between mb-4">
-                                <button onClick={() => setViewDate(new Date(date.getFullYear(), date.getMonth() - 1, 1))} className="p-2 border rounded-xl bg-relief-bg border-relief-border hover:text-white text-relief-text-secondary"><ChevronLeft size={16} /></button>
-                                <button onClick={() => setShowDatePicker(true)} className="flex items-center gap-2 px-4 py-2 text-sm font-bold border rounded-xl bg-relief-bg border-relief-border hover:bg-white/5 text-relief-text-primary"><CalendarIcon size={14} className="text-relief-primary" />{getMonthName(date.getMonth())} {date.getFullYear()}</button>
-                                <button onClick={() => setViewDate(new Date(date.getFullYear(), date.getMonth() + 1, 1))} className="p-2 border rounded-xl bg-relief-bg border-relief-border hover:text-white text-relief-text-secondary"><ChevronRight size={16} /></button>
-                            </div>
-                            <div className="grid grid-cols-7 gap-1 mb-2 text-center">{['S','M','T','W','T','F','S'].map((d, i) => (<div key={i} className="text-[9px] font-bold text-relief-text-secondary uppercase">{d}</div>))}</div>
-                            <div className="grid grid-cols-7 gap-1">{renderCalendar()}</div>
-                            <div className="flex justify-between items-center px-4 mt-6">
-                                <button onClick={() => setShowAddTxnModal(true)} className="w-12 h-12 rounded-full bg-relief-surface border border-relief-primary/50 flex items-center justify-center text-relief-primary shadow-lg active:scale-95 transition-transform"><Plus size={24} /></button>
-                                <button onClick={() => setShowEditBalanceModal(true)} className="w-12 h-12 rounded-full bg-relief-surface border border-relief-action/50 flex items-center justify-center text-relief-action active:scale-95 transition-transform"><Edit3 size={20} /></button>
-                                <button onClick={() => setShowWhatIfModal(true)} className="w-12 h-12 rounded-full bg-relief-surface border border-relief-magic/50 flex items-center justify-center text-relief-magic active:scale-95 transition-transform"><Sparkles size={20} /></button>
-                                <button onClick={() => setShowProjected(!showProjected)} className={`w-12 h-12 rounded-full flex items-center justify-center border transition-all active:scale-95 ${showProjected ? 'bg-[#FF4D00] text-white border-[#FF4D00] shadow-lg' : 'bg-relief-surface border-relief-border text-relief-text-secondary'}`}><Flame size={20} /></button>
-                            </div>
-                        </div>
-
-                        {/* Activity on Selected Date */}
-                        <div className="p-4 bg-[#0F172A] border border-white/5 shadow-lg shadow-black/40 rounded-2xl">
-                            <div className="flex items-center gap-2 mb-3">
-                                <Clock className="w-3 h-3 text-relief-primary" />
-                                <span className="text-[10px] font-bold uppercase text-relief-text-secondary tracking-wider">
-                                    Activity on {new Date(selectedDateStr).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' })}
-                                </span>
-                            </div>
-                            <div className="space-y-2">
-                                {transactions
-                                    .filter(t => normalizeDate(t.transaction_date) === selectedDateStr && t.status !== 'skipped')
-                                    .length > 0 ? (
-                                        transactions
-                                            .filter(t => normalizeDate(t.transaction_date) === selectedDateStr && t.status !== 'skipped')
-                                            .map(t => (
-                                                <div key={t.id} onClick={() => setEditingTxn(t)} className="flex items-center justify-between p-3 rounded-xl bg-relief-bg border border-relief-border hover:bg-white/5 transition-colors cursor-pointer group">
-                                                    <div className="overflow-hidden">
-                                                        <div className="text-xs font-bold text-relief-text-primary truncate group-hover:text-relief-primary transition-colors">{t.name || t.merchant || 'Untitled'}</div>
-                                                        <div className="flex items-center gap-2 mt-0.5">
-                                                        </div>
-                                                    </div>
-                                                    <div className={`text-xs font-bold whitespace-nowrap ${t.amount >= 0 ? 'text-relief-primary' : 'text-relief-text-secondary'}`}>
-                                                        {t.amount >= 0 ? '+' : ''}{Math.round(t.amount)}
-                                                    </div>
-                                                </div>
-                                            ))
-                                    ) : (
-                                        <div className="text-center py-4 text-xs text-relief-text-secondary italic">No activity on this date.</div>
-                                    )
-                                }
-                            </div>
-                        </div>
-                    </div>
+                    <CalendarView 
+                        date={date}
+                        transactions={transactions}
+                        openingBalance={openingBalance}
+                        lowBalanceThreshold={lowBalanceThreshold}
+                        todayInTimezone={todayInTimezone}
+                        showProjected={showProjected}
+                        budgetGroups={budgetGroups}
+                        budgetOverrides={budgetOverrides}
+                        setViewDate={setViewDate}
+                        setSelectedDateStr={setSelectedDateStr}
+                        selectedDateStr={selectedDateStr}
+                        setShowDatePicker={setShowDatePicker}
+                        setShowAddTxnModal={setShowAddTxnModal}
+                        setShowEditBalanceModal={setShowEditBalanceModal}
+                        setShowWhatIfModal={setShowWhatIfModal}
+                        setShowProjected={setShowProjected}
+                        setEditingTxn={setEditingTxn}
+                        isViewLoading={isViewLoading}
+                    />
                 </div>
             </div>
 
@@ -682,9 +497,9 @@ export const Home: React.FC = () => {
                             <StatusIconComp className={`w-8 h-8 mb-2 ${cmStatus==='Critical'?'text-red-400':cmStatus==='Caution'?'text-yellow-400':'text-emerald-400'}`} />
                             <div className={`text-2xl font-bold ${cmStatus==='Critical'?'text-red-400':cmStatus==='Caution'?'text-yellow-400':'text-emerald-400'}`}>{cmStatus}</div>
                             <p className="text-[10px] mt-1 max-w-[90%] mx-auto text-slate-300 opacity-80">
-                                {cmStatus === 'Critical' ? `Your projected balance dips below zero in ${getMonthName(date.getMonth())}.` : 
-                                 cmStatus === 'Caution' ? `Your projected balance dips below your balance goal in ${getMonthName(date.getMonth())}.` :
-                                 `Your projected balance stays above your balance goal in ${getMonthName(date.getMonth())}.`}
+                                {cmStatus === 'Critical' ? `Your projected balance dips below zero in ${getMonthName(new Date(todayInTimezone).getUTCMonth())}.` : 
+                                 cmStatus === 'Caution' ? `Your projected balance dips below your balance goal in ${getMonthName(new Date(todayInTimezone).getUTCMonth())}.` :
+                                 `Your projected balance stays above your balance goal in ${getMonthName(new Date(todayInTimezone).getUTCMonth())}.`}
                             </p>
                         </div>
                     </div>
@@ -696,7 +511,7 @@ export const Home: React.FC = () => {
                 <div className="space-y-2">
                     <p className="text-xs text-slate-500 mb-4">Adjust the order or hide variable expenses from the dashboard.</p>
                     <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
-                        {visibleVariableExpenses.map((cat, idx) => (
+                        {allVariableExpenses.map((cat, idx) => (
                             <div key={cat.id} className="flex items-center justify-between p-3 rounded-xl bg-slate-800 border border-white/5">
                                 <div className="flex items-center gap-3">
                                      <button onClick={() => toggleCategoryVisibility(cat.id)} className={`p-1.5 rounded-lg transition-colors ${preferences.hidden_categories.includes(cat.id) ? 'bg-slate-700 text-slate-500' : 'bg-emerald-400/10 text-emerald-400'}`}>
@@ -706,7 +521,7 @@ export const Home: React.FC = () => {
                                 </div>
                                 <div className="flex gap-2">
                                     <button onClick={() => handleSortUpdate(cat.id, 'up')} disabled={idx === 0} className="p-1 rounded bg-slate-700 text-slate-300 hover:bg-emerald-500 hover:text-white disabled:opacity-20"><ArrowUp className="w-4 h-4" /></button>
-                                    <button onClick={() => handleSortUpdate(cat.id, 'down')} disabled={idx === visibleVariableExpenses.length - 1} className="p-1 rounded bg-slate-700 text-slate-300 hover:bg-emerald-500 hover:text-white disabled:opacity-20"><ArrowDown className="w-4 h-4" /></button>
+                                    <button onClick={() => handleSortUpdate(cat.id, 'down')} disabled={idx === allVariableExpenses.length - 1} className="p-1 rounded bg-slate-700 text-slate-300 hover:bg-emerald-500 hover:text-white disabled:opacity-20"><ArrowDown className="w-4 h-4" /></button>
                                 </div>
                             </div>
                         ))}

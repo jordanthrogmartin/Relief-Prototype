@@ -21,115 +21,12 @@ export const WhatIfForm: React.FC<Props> = ({ transaction, initialDate, onSucces
     const [amount, setAmount] = useState(transaction ? Math.abs(transaction.amount).toString() : '');
     const [date, setDate] = useState(transaction?.transaction_date || initialDate || todayInTimezone);
     const [type, setType] = useState<TransactionType>(transaction?.type || 'expense');
-    const [merchant, setMerchant] = useState(transaction?.merchant || '');
     
     // Recurring State
     const [isRecurring, setIsRecurring] = useState(transaction?.is_recurring || false);
     const [freq, setFreq] = useState(transaction?.recur_frequency || 1);
     const [period, setPeriod] = useState<any>(transaction?.recur_period || 'months');
     const [endDate, setEndDate] = useState(transaction?.recur_end_date || '');
-
-    // Autocomplete & Smart Assist State
-    const [rules, setRules] = useState<TransactionRule[]>([]);
-    const [existingMerchants, setExistingMerchants] = useState<string[]>([]);
-    const [merchantSuggestions, setMerchantSuggestions] = useState<string[]>([]);
-    const [showSuggestions, setShowSuggestions] = useState(false);
-    const [activeRule, setActiveRule] = useState<TransactionRule | null>(null);
-    const wrapperRef = useRef<HTMLDivElement>(null);
-    const [budgetGroups, setBudgetGroups] = useState<BudgetGroup[]>([]);
-
-    useEffect(() => {
-        const fetchData = async () => {
-             // Need groups for categorization rules logic if necessary, though WhatIf usually doesn't have deep categorization UI, 
-             // but if a rule sets category, we might want to respect it or at least show it.
-            const { data: groupData } = await supabase.from('budget_groups').select('*, categories:budget_categories(*)').order('sort_order');
-            if (groupData) setBudgetGroups(groupData);
-
-            const { data: rulesData } = await supabase.from('transaction_rules').select('*').eq('is_active', true);
-            if (rulesData) setRules(rulesData);
-
-            // Fetch distinct merchants for autocomplete
-            const { data: txnData } = await supabase.from('transactions').select('merchant').neq('merchant', null).limit(1000);
-            if (txnData) {
-                // Trim whitespace and remove duplicates
-                const unique = Array.from(new Set(
-                    txnData
-                        .map((t: any) => t.merchant?.trim())
-                        .filter((m: any) => m && m.length > 0)
-                ));
-                setExistingMerchants(unique as string[]);
-            }
-        };
-        fetchData();
-
-        // Click outside listener for suggestions
-        const handleClickOutside = (event: MouseEvent) => {
-            if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) {
-                setShowSuggestions(false);
-            }
-        };
-        document.addEventListener("mousedown", handleClickOutside);
-        return () => document.removeEventListener("mousedown", handleClickOutside);
-    }, []);
-
-    // --- Smart Assist Rule Logic ---
-    useEffect(() => {
-        if (!merchant && !amount) {
-            setActiveRule(null);
-            return;
-        }
-        const numAmount = parseFloat(amount);
-        const found = rules.find(rule => {
-            return rule.conditions.every(cond => {
-                let testVal: string | number = '';
-                if (cond.field === 'merchant') testVal = merchant.toLowerCase();
-                else if (cond.field === 'name') testVal = name.toLowerCase();
-                else if (cond.field === 'amount') testVal = isNaN(numAmount) ? 0 : numAmount;
-
-                const condVal = typeof cond.value === 'string' ? cond.value.toLowerCase() : cond.value;
-
-                switch (cond.operator) {
-                    case 'is': return testVal === condVal;
-                    case 'contains': return String(testVal).includes(String(condVal));
-                    case 'starts_with': return String(testVal).startsWith(String(condVal));
-                    case 'eq': return testVal == condVal;
-                    case 'gt': return testVal > condVal;
-                    case 'lt': return testVal < condVal;
-                    default: return false;
-                }
-            });
-        });
-        setActiveRule(found || null);
-    }, [merchant, name, amount, rules]);
-
-    const applySmartRule = () => {
-        if (!activeRule) return;
-        activeRule.actions.forEach(action => {
-            if (action.type === 'rename_merchant') setMerchant(action.value);
-            // Note: WhatIf form currently doesn't have a category dropdown in this version, 
-            // but we can at least support merchant renaming or maybe in future category.
-            // If the user adds category field to WhatIf form, we'd set it here.
-        });
-        setActiveRule(null);
-    };
-
-    // --- Autocomplete Logic ---
-    const handleMerchantChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const val = e.target.value;
-        setMerchant(val);
-        if (val.length > 1) {
-            const matches = existingMerchants.filter(m => m.toLowerCase().startsWith(val.toLowerCase())).slice(0, 5);
-            setMerchantSuggestions(matches);
-            setShowSuggestions(matches.length > 0);
-        } else {
-            setShowSuggestions(false);
-        }
-    };
-
-    const selectSuggestion = (val: string) => {
-        setMerchant(val);
-        setShowSuggestions(false);
-    };
 
     const handleSubmit = () => {
         const finalAmount = parseFloat(amount) * (type === 'income' ? 1 : -1);
@@ -139,7 +36,7 @@ export const WhatIfForm: React.FC<Props> = ({ transaction, initialDate, onSucces
             id: transaction?.id || uuidv4(),
             user_id: 'ghost',
             name,
-            merchant: merchant || name,
+            merchant: name, // Use name as merchant since merchant input is removed
             amount: finalAmount,
             transaction_date: date,
             type,
@@ -213,51 +110,6 @@ export const WhatIfForm: React.FC<Props> = ({ transaction, initialDate, onSucces
             </div>
 
             <div className="space-y-4 relative">
-                {/* Merchant Input with Autocomplete */}
-                <div className="relative" ref={wrapperRef}>
-                    <input 
-                        placeholder="Merchant (Optional)" 
-                        value={merchant} 
-                        onChange={handleMerchantChange}
-                        onFocus={() => { if(merchant.length > 1 && merchantSuggestions.length > 0) setShowSuggestions(true); }}
-                        className="w-full p-4 text-sm text-white border rounded-xl bg-slate-800/50 border-white/10 focus:border-indigo-400/50 outline-none"
-                    />
-                     {showSuggestions && (
-                        <div className="absolute top-full left-0 right-0 mt-1 bg-slate-800 border border-white/10 rounded-xl shadow-xl z-50 overflow-hidden">
-                            {merchantSuggestions.map(s => (
-                                <button
-                                    key={s}
-                                    onClick={() => selectSuggestion(s)}
-                                    className="w-full text-left px-4 py-3 text-sm text-slate-300 hover:bg-white/5 hover:text-white border-b border-white/5 last:border-0"
-                                >
-                                    {s}
-                                </button>
-                            ))}
-                        </div>
-                    )}
-                </div>
-
-                 {/* Smart Assist Pill */}
-                 {activeRule && (
-                    <div className="p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-between animate-fade-in">
-                        <div className="flex items-center gap-2 overflow-hidden">
-                            <Sparkles className="w-4 h-4 text-indigo-400 shrink-0" />
-                            <div className="flex flex-col overflow-hidden">
-                                <span className="text-[10px] font-bold uppercase text-indigo-400">Smart Assist</span>
-                                <span className="text-xs text-indigo-200 truncate pr-2">
-                                    Apply "{activeRule.name}"?
-                                </span>
-                            </div>
-                        </div>
-                        <button 
-                            onClick={applySmartRule}
-                            className="shrink-0 px-3 py-1.5 rounded-lg bg-indigo-500 text-white text-[10px] font-bold uppercase tracking-wider hover:bg-indigo-400 transition-colors flex items-center gap-1"
-                        >
-                            Apply <ArrowRight className="w-3 h-3" />
-                        </button>
-                    </div>
-                )}
-
                 <input 
                     placeholder="Simulation Name" 
                     value={name} 

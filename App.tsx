@@ -18,12 +18,10 @@ import { GlobalProvider, useGlobalContext } from './context/GlobalContext';
 // Loading Screen Component
 const AppLoader = () => (
     <div className="fixed inset-0 bg-[#020617] flex flex-col items-center justify-center z-50">
-        <div className="relative w-20 h-20">
+        <div className="relative w-20 h-20 flex items-center justify-center">
             <div className="absolute inset-0 rounded-full border-2 border-slate-800"></div>
             <div className="absolute inset-0 rounded-full border-t-2 border-emerald-400 animate-spin"></div>
-            <div className="absolute inset-4 rounded-full bg-slate-900 flex items-center justify-center">
-                <img src="/assets/icon.png" className="w-8 h-8 opacity-80" onError={(e) => {e.currentTarget.style.display='none'}} />
-            </div>
+            <img src="/assets/relief-icon.svg" className="w-8 h-8 opacity-90" onError={(e) => {e.currentTarget.style.display='none'}} />
         </div>
         <p className="mt-6 text-xs font-bold text-emerald-500 uppercase tracking-widest animate-pulse">Loading Relief...</p>
     </div>

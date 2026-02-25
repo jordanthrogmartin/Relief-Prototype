@@ -1,24 +1,23 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronLeft, Menu, X } from 'lucide-react';
+import { ChevronLeft, Menu } from 'lucide-react';
 import { supabase } from '../../services/supabase';
 import { BudgetGroup, BudgetCategory } from '../../types';
 import { Modal } from '../../components/ui/Modal';
 import { Button } from '../../components/ui/Button';
-import { formatCategoryName, parseCategoryName } from '../../utils/emojiUtils';
-import { BUDGET_EMOJIS } from '../../constants/emojis';
+import { formatCategoryName } from '../../utils/emojiUtils';
+import { EditGroupModal } from '../../components/modals/EditGroupModal';
+import { EditCategoryModal } from '../../components/modals/EditCategoryModal';
 
 export const EditBudgetSettings: React.FC = () => {
     const navigate = useNavigate();
     const [groups, setGroups] = useState<BudgetGroup[]>([]);
-    const [loading, setLoading] = useState(true);
     
     // Modal State
     const [editingCategory, setEditingCategory] = useState<BudgetCategory | null>(null);
     const [editingGroup, setEditingGroup] = useState<BudgetGroup | null>(null);
     const [isGroupModalOpen, setIsGroupModalOpen] = useState(false);
     const [isCatModalOpen, setIsCatModalOpen] = useState(false);
-    const [showEmojiPicker, setShowEmojiPicker] = useState(false);
     
     // Move Group Modal State
     const [isMoveModalOpen, setIsMoveModalOpen] = useState(false);
@@ -32,16 +31,21 @@ export const EditBudgetSettings: React.FC = () => {
         onConfirm: () => void;
     }>({ isOpen: false, title: '', message: '', onConfirm: () => {} });
 
-    // Form Fields
-    const [name, setName] = useState('');
-    const [emoji, setEmoji] = useState('');
-    const [isFixed, setIsFixed] = useState(true);
+    // State for new category group selection
     const [selectedGroupId, setSelectedGroupId] = useState('');
-    const [groupType, setGroupType] = useState<'income' | 'expense' | 'goal'>('expense');
 
     // Drag State
     const [draggedGroupIdx, setDraggedGroupIdx] = useState<number | null>(null);
     const [draggedCategory, setDraggedCategory] = useState<{groupId: string, catIndex: number} | null>(null);
+
+    // Ghost State for Touch Drag
+    const [dragGhost, setDragGhost] = useState<{
+        x: number;
+        y: number;
+        type: 'group' | 'category';
+        name: string;
+        width: number;
+    } | null>(null);
 
     useEffect(() => {
         fetchGroups();
@@ -56,61 +60,47 @@ export const EditBudgetSettings: React.FC = () => {
             }));
             setGroups(sorted);
         }
-        setLoading(false);
     };
 
     // --- Actions ---
 
     const handleAddGroup = () => {
         setEditingGroup(null);
-        setName('');
-        setGroupType('expense');
         setIsGroupModalOpen(true);
     };
 
     const handleEditGroup = (g: BudgetGroup) => {
         setEditingGroup(g);
-        setName(g.name);
-        setGroupType(g.type as any);
         setIsGroupModalOpen(true);
     };
 
     const handleAddCategory = (groupId: string) => {
         setEditingCategory(null);
         setSelectedGroupId(groupId);
-        setName('');
-        setEmoji('');
-        setIsFixed(true);
         setIsCatModalOpen(true);
-        setShowEmojiPicker(false);
     };
 
     const handleEditCategory = (c: BudgetCategory) => {
         setEditingCategory(c);
-        const { emoji: e, name: n } = parseCategoryName(c.name);
-        setName(n);
-        setEmoji(e);
-        setIsFixed(c.is_fixed);
         setIsCatModalOpen(true);
-        setShowEmojiPicker(false);
     };
 
     // --- Saves ---
 
-    const saveGroup = async () => {
+    const saveGroup = async (name: string, type: 'income' | 'expense' | 'goal') => {
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return;
 
         try {
             if (editingGroup) {
-                const { error } = await supabase.from('budget_groups').update({ name, type: groupType }).eq('id', editingGroup.id);
+                const { error } = await supabase.from('budget_groups').update({ name, type }).eq('id', editingGroup.id);
                 if (error) throw error;
             } else {
                 const maxSort = groups.length > 0 ? Math.max(...groups.map(g => g.sort_order)) : 0;
                 const { error } = await supabase.from('budget_groups').insert({
                     user_id: user.id,
                     name,
-                    type: groupType,
+                    type,
                     sort_order: maxSort + 1
                 });
                 if (error) throw error;
@@ -198,7 +188,7 @@ export const EditBudgetSettings: React.FC = () => {
 
     // --- Delete Category Logic ---
 
-    const saveCategory = async () => {
+    const saveCategory = async (name: string, emoji: string, isFixed: boolean) => {
         try {
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) throw new Error("You must be logged in.");
@@ -330,6 +320,18 @@ export const EditBudgetSettings: React.FC = () => {
     const handleGroupTouchStart = (e: React.TouchEvent, index: number) => {
         // e.preventDefault(); // Do NOT prevent default here or clicks won't work. prevent default on MOVE.
         setTouchDraggingGroupIdx(index);
+        const touch = e.touches[0];
+        const target = e.currentTarget.closest('[data-group-id]');
+        if (target) {
+            const rect = target.getBoundingClientRect();
+            setDragGhost({
+                x: touch.clientX,
+                y: touch.clientY,
+                type: 'group',
+                name: groups[index].name,
+                width: rect.width
+            });
+        }
     };
 
     const handleGroupTouchMove = (e: React.TouchEvent) => {
@@ -339,6 +341,8 @@ export const EditBudgetSettings: React.FC = () => {
         if (e.cancelable) e.preventDefault();
 
         const touch = e.touches[0];
+        setDragGhost(prev => prev ? { ...prev, x: touch.clientX, y: touch.clientY } : null);
+
         const target = document.elementFromPoint(touch.clientX, touch.clientY);
         
         if (!target) return;
@@ -359,6 +363,7 @@ export const EditBudgetSettings: React.FC = () => {
     };
 
     const handleGroupTouchEnd = async () => {
+        setDragGhost(null);
         if (touchDraggingGroupIdx !== null) {
             setTouchDraggingGroupIdx(null);
             // Save order
@@ -426,6 +431,29 @@ export const EditBudgetSettings: React.FC = () => {
     const handleCatTouchStart = (e: React.TouchEvent, groupId: string, index: number) => {
         e.stopPropagation(); // Don't trigger group drag
         setTouchDraggingCat({ groupId, index });
+
+        const touch = e.touches[0];
+        const target = e.currentTarget.closest('[data-cat-index]'); // Use closest on currentTarget to be safe, or just target
+        // Actually currentTarget is the handle div. We need the row.
+        // The handle is inside the row.
+        const row = e.currentTarget.closest('.flex.justify-between'); // The row container
+        
+        if (row) {
+            const rect = row.getBoundingClientRect();
+            // Find category name
+            const group = groups.find(g => g.id === groupId);
+            const cat = group?.categories[index];
+            
+            if (cat) {
+                setDragGhost({
+                    x: touch.clientX,
+                    y: touch.clientY,
+                    type: 'category',
+                    name: cat.name,
+                    width: rect.width
+                });
+            }
+        }
     };
 
     const handleCatTouchMove = (e: React.TouchEvent) => {
@@ -433,6 +461,8 @@ export const EditBudgetSettings: React.FC = () => {
         if (e.cancelable) e.preventDefault();
 
         const touch = e.touches[0];
+        setDragGhost(prev => prev ? { ...prev, x: touch.clientX, y: touch.clientY } : null);
+
         const target = document.elementFromPoint(touch.clientX, touch.clientY);
         if (!target) return;
 
@@ -463,6 +493,7 @@ export const EditBudgetSettings: React.FC = () => {
     };
 
     const handleCatTouchEnd = async () => {
+        setDragGhost(null);
         if (touchDraggingCat) {
             const groupId = touchDraggingCat.groupId;
             setTouchDraggingCat(null);
@@ -585,42 +616,21 @@ export const EditBudgetSettings: React.FC = () => {
                 })}
             </div>
 
-            {/* Edit Group Modal */}
-            <Modal isOpen={isGroupModalOpen} onClose={() => setIsGroupModalOpen(false)} title={editingGroup ? "Edit Group" : "New Group"}>
-                <div className="space-y-4">
-                    <input 
-                        placeholder="Group Name" 
-                        value={name}
-                        onChange={e => setName(e.target.value)}
-                        className="w-full p-4 text-sm text-white border rounded-xl bg-slate-800/50 border-white/10 outline-none"
-                    />
-                    <div className="flex gap-2">
-                        <button 
-                            onClick={() => setGroupType('expense')}
-                            className={`flex-1 py-3 rounded-lg text-xs font-bold uppercase ${groupType === 'expense' ? 'bg-slate-700 text-white' : 'bg-slate-800 text-slate-500'}`}
-                        >
-                            Expense
-                        </button>
-                        <button 
-                            onClick={() => setGroupType('income')}
-                            className={`flex-1 py-3 rounded-lg text-xs font-bold uppercase ${groupType === 'income' ? 'bg-emerald-600/50 text-emerald-100' : 'bg-slate-800 text-slate-500'}`}
-                        >
-                            Income
-                        </button>
-                        <button 
-                            onClick={() => setGroupType('goal')}
-                            className={`flex-1 py-3 rounded-lg text-xs font-bold uppercase ${groupType === 'goal' ? 'bg-blue-600/50 text-blue-100' : 'bg-slate-800 text-slate-500'}`}
-                        >
-                            Goal
-                        </button>
-                    </div>
-                    <div className="flex gap-3 pt-4">
-                        {editingGroup && <Button variant="danger" onClick={handleDeleteGroupClick}>Delete</Button>}
-                        <Button variant="secondary" onClick={() => setIsGroupModalOpen(false)} className="flex-1">Cancel</Button>
-                        <Button onClick={saveGroup} className="flex-1">Save</Button>
-                    </div>
-                </div>
-            </Modal>
+            <EditGroupModal 
+                isOpen={isGroupModalOpen} 
+                onClose={() => setIsGroupModalOpen(false)} 
+                group={editingGroup} 
+                onSave={saveGroup} 
+                onDelete={handleDeleteGroupClick}
+            />
+
+            <EditCategoryModal 
+                isOpen={isCatModalOpen} 
+                onClose={() => setIsCatModalOpen(false)} 
+                category={editingCategory} 
+                onSave={saveCategory} 
+                onDelete={handleDeleteCategoryClick}
+            />
 
              {/* Move Categories Modal (When deleting group) */}
              <Modal isOpen={isMoveModalOpen} onClose={() => setIsMoveModalOpen(false)} title="Move Categories">
@@ -651,78 +661,6 @@ export const EditBudgetSettings: React.FC = () => {
                 </div>
             </Modal>
 
-            {/* Edit Category Modal */}
-            <Modal isOpen={isCatModalOpen} onClose={() => setIsCatModalOpen(false)} title={editingCategory ? "Edit Category" : "New Category"}>
-                <div className="space-y-4">
-                    <div className="flex gap-3">
-                        <div className="w-16">
-                            <label className="text-[10px] uppercase font-bold text-slate-500">Icon</label>
-                            <button 
-                                onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                                className="w-full h-[60px] mt-1 text-2xl flex items-center justify-center text-white border rounded-xl bg-slate-800/50 border-white/10 outline-none hover:bg-white/5 transition-colors"
-                            >
-                                {emoji || '🍔'}
-                            </button>
-                        </div>
-                        <div className="flex-1">
-                            <label className="text-[10px] uppercase font-bold text-slate-500">Name</label>
-                            <input 
-                                value={name}
-                                onChange={e => setName(e.target.value)}
-                                className="w-full p-4 mt-1 text-sm text-white border rounded-xl bg-slate-800/50 border-white/10 outline-none"
-                            />
-                        </div>
-                    </div>
-
-                    {showEmojiPicker && (
-                        <div className="p-2 bg-slate-900/80 rounded-xl border border-white/10 max-h-[200px] overflow-y-auto">
-                            <div className="grid grid-cols-8 gap-2 mb-2">
-                                {BUDGET_EMOJIS.map(e => (
-                                    <button 
-                                        key={e} 
-                                        onClick={() => { setEmoji(e); setShowEmojiPicker(false); }}
-                                        className="w-8 h-8 flex items-center justify-center text-xl hover:bg-white/10 rounded transition-colors"
-                                    >
-                                        {e}
-                                    </button>
-                                ))}
-                            </div>
-                            <button 
-                                onClick={() => { setEmoji(''); setShowEmojiPicker(false); }}
-                                className="w-full py-2 text-xs font-bold text-red-400 uppercase tracking-wider hover:bg-white/5 rounded transition-colors"
-                            >
-                                Remove Icon
-                            </button>
-                        </div>
-                    )}
-
-                    <div className="flex gap-2">
-                        <button 
-                            onClick={() => setIsFixed(true)}
-                            className={`px-4 py-2 rounded text-xs font-bold ${isFixed ? 'bg-emerald-400 text-emerald-950' : 'bg-slate-800 text-slate-500'}`}
-                        >
-                            Fixed
-                        </button>
-                        <button 
-                            onClick={() => setIsFixed(false)}
-                            className={`px-4 py-2 rounded text-xs font-bold ${!isFixed ? 'bg-slate-600 text-white' : 'bg-slate-800 text-slate-500'}`}
-                        >
-                            Variable
-                        </button>
-                    </div>
-                    <div className="flex gap-3 pt-4 border-t border-white/10 mt-4">
-                        {editingCategory && (
-                            <button onClick={handleDeleteCategoryClick} className="text-xs font-bold text-red-400 hover:text-red-300 uppercase tracking-wider px-2">
-                                Delete Category
-                            </button>
-                        )}
-                        <div className="flex-1"></div>
-                        <Button variant="secondary" onClick={() => setIsCatModalOpen(false)}>Cancel</Button>
-                        <Button onClick={saveCategory}>Save</Button>
-                    </div>
-                </div>
-            </Modal>
-
             {/* Confirmation Modal */}
             <Modal isOpen={confirmState.isOpen} onClose={() => setConfirmState(prev => ({ ...prev, isOpen: false }))} title={confirmState.title}>
                 <div className="space-y-4">
@@ -737,6 +675,22 @@ export const EditBudgetSettings: React.FC = () => {
                     </div>
                 </div>
             </Modal>
+
+            {/* Drag Ghost Overlay */}
+            {dragGhost && (
+                <div 
+                    className="fixed z-[100] pointer-events-none bg-slate-800/90 border border-emerald-500/50 rounded-xl shadow-2xl flex items-center px-4 py-3 text-white font-bold text-sm backdrop-blur-sm"
+                    style={{ 
+                        left: dragGhost.x, 
+                        top: dragGhost.y, 
+                        width: dragGhost.width,
+                        transform: 'translate(-24px, -50%) scale(1.05)'
+                    }}
+                >
+                    <Menu className="w-4 h-4 mr-3 text-emerald-400" />
+                    {dragGhost.name}
+                </div>
+            )}
         </div>
     );
 };
